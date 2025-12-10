@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<!-- CODE UPDATED: New attendees who enter their name are automatically added to the staff list. Staff view renamed to "Attending". -->
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dublin Christmas Check-In | Firebase</title>
+
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+
+    <style>
+        body { background: linear-gradient(135deg, #cce6ff 0%, #ffffff 50%, #ffebf0 100%); background-attachment: fixed; }
+
+main { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(5px); }
+
+header { background: linear-gradient(90deg, #0066cc, #0099ff); }
+
+.tab-button.active { background: linear-gradient(90deg, #0066cc, #0099ff); border-color: var(--accent-color); }
+
+#check-in-form { background: rgba(240, 248, 255, 0.8); backdrop-filter: blur(4px); border: 1px solid #99c2ff; }
+
+#staff-view h2 { background: linear-gradient(90deg, #0066cc11, #ffcc0011); padding: 10px; border-radius: 6px; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>🎄 Dublin Christmas Event Check-In 🌟</h1>
+    </header>
+
+    <main>
+        <div class="tabs">
+            <button class="tab-button active" data-tab="attendee-view">Ticket Check-In</button>
+            <button class="tab-button" data-tab="staff-view">Attending</button>
+        </div>
+
+        <div id="attendee-view" class="tab-content active">
+            <h2>Welcome! Please Enter Your Name</h2>
+            <form id="check-in-form">
+                <input type="text" id="check-in-input" placeholder="Enter Full Name" required>
+                <button type="submit" id="check-in-button">Check In Now</button>
+            </form>
+            <div id="check-in-message"></div>
+        </div>
+
+        <div id="staff-view" class="tab-content">
+            <h2>Attending (Live)</h2>
+            <input type="text" id="search-bar" placeholder="Quick Search: Name...">
+
+            <div id="loading-spinner" class="loading-message">Loading List...</div>
+
+            <table id="guestlist-table" style="display: none;">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Arrival Time</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="guestlist-body"></tbody>
+            </table>
+        </div>
+
+    </main>
+
+<script>
+// Firebase Config
+const firebaseConfig = {
+    apiKey: "AIzaSyC9e8ISFAVm9Z2nmq2yWHvt_t1HCEmw7W0", 
+    authDomain: "dublinxmascheckin.firebaseapp.com",
+    projectId: "dublinxmascheckin",
+    storageBucket: "dublinxmascheckin.firebasestorage.app",
+    messagingSenderId: "392375826972",
+    appId: "1:392375826972:web:4e2826cbc0a118a43efdd9"
+};
+
+let app, db;
+try {
+    app = firebase.initializeApp(firebaseConfig);
+    db = firebase.firestore();
+} catch (e) {
+    alert("Firebase Error – check config.");
+}
+
+const GUESTLIST_COLLECTION = "guests";
+let guestListCache = [];
+
+function showMessage(msg, type) {
+    const box = document.getElementById("check-in-message");
+    box.textContent = msg;
+    box.className = "message-" + type;
+    box.style.display = "block";
+    setTimeout(() => box.style.display = "none", 4000);
+}
+
+function formatTime(timeString) {
+    if (!timeString) return "N/A";
+    const d = new Date(timeString);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+// Real-time listener
+function setupFirebaseListener() {
+    const loading = document.getElementById("loading-spinner");
+    const table = document.getElementById("guestlist-table");
+
+    db.collection(GUESTLIST_COLLECTION).onSnapshot(snapshot => {
+        guestListCache = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        renderGuestList(document.getElementById("search-bar").value);
+        loading.style.display = "none";
+        table.style.display = "table";
+    });
+}
+
+// ------------------------------
+// NEW: Create entry if name not found
+// ------------------------------
+async function createNewGuest(name) {
+    const now = new Date().toISOString();
+    const doc = await db.collection(GUESTLIST_COLLECTION).add({
+        name: name,
+        checkedIn: true,
+        arrivalTime: now
+    });
+    return doc.id;
+}
+
+// Attendee Check-in
+const checkInForm = document.getElementById("check-in-form");
+checkInForm.addEventListener("submit", async e => {
+    e.preventDefault();
+    const name = document.getElementById("check-in-input").value.trim();
+    if (!name) return;
+
+    const upper = name.toUpperCase();
+    let guest = guestListCache.find(g => g.name.toUpperCase() === upper);
+
+    if (!guest) {
+        // CREATE NEW PERSON
+        try {
+            await createNewGuest(name);
+            showMessage(`🎉 Welcome, ${name}! You've been added to the list.`, "success");
+        } catch (err) {
+            showMessage("❌ Error creating entry.", "error");
+        }
+        return;
+    }
+
+    if (guest.checkedIn) {
+        showMessage(`👋 ${guest.name}, you're already checked in!`, "error");
+        return;
+    }
+
+    // Update existing entry
+    try {
+        await db.collection(GUESTLIST_COLLECTION).doc(guest.id).update({
+            checkedIn: true,
+            arrivalTime: new Date().toISOString()
+        });
+        showMessage(`🎄 Welcome, ${guest.name}!`, "success");
+    } catch (err) {
+        showMessage("❌ Error during check-in.", "error");
+    }
+});
+
+// Staff toggle
+async function toggleCheckIn(id, status) {
+    const newState = !status;
+    const newTime = newState ? new Date().toISOString() : null;
+    await db.collection(GUESTLIST_COLLECTION).doc(id).update({
+        checkedIn: newState,
+        arrivalTime: newTime
+    });
+}
+window.toggleCheckIn = toggleCheckIn;
+
+function renderGuestList(filter = "") {
+    const body = document.getElementById("guestlist-body");
+    body.innerHTML = "";
+    const query = filter.toUpperCase();
+
+    let filtered = guestListCache.filter(g => g.name.toUpperCase().includes(query));
+
+    filtered.sort((a, b) => (
+        a.checkedIn === b.checkedIn ? a.name.localeCompare(b.name) : a.checkedIn ? 1 : -1
+    ));
+
+    filtered.forEach(g => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+            <td>${g.name}</td>
+            <td>${g.checkedIn ? "Checked In" : "Not Checked In"}</td>
+            <td>${formatTime(g.arrivalTime)}</td>
+            <td><button onclick="toggleCheckIn('${g.id}', ${g.checkedIn})">${g.checkedIn ? "Undo" : "Check In"}</button></td>
+        `;
+        body.appendChild(row);
+    });
+}
+
+document.getElementById("search-bar").addEventListener("input", e => renderGuestList(e.target.value));
+
+// Tabs
+document.querySelectorAll('.tab-button').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+        btn.classList.add('active');
+        document.getElementById(btn.dataset.tab).classList.add('active');
+    });
+});
+
+document.addEventListener('DOMContentLoaded', setupFirebaseListener);
+</script>
+
+</body>
+</html>
